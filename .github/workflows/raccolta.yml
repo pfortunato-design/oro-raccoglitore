@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
 
       - name: Installa la sola dipendenza che serve
-        run: pip install --quiet xlrd   # legge il .xls storico dell'indice GPR
+        run: pip install --quiet xlrd tzdata   # xlrd legge il .xls del GPR; tzdata garantisce il fuso Europe/Rome sul runner
 
       - name: Misura
         run: python raccogli.py

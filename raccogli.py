@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime, timezone, date, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from oro import fonti
@@ -54,8 +55,11 @@ def carica_precedente() -> dict:
 def main() -> int:
     precedente = carica_precedente()
     ora_utc = datetime.now(timezone.utc)
-    # Orario di Roma senza dipendenze esterne: CET/CEST secondo la regola UE.
-    ora_roma = ora_utc.astimezone()
+    # ⛔ Fuso DICHIARATO, non «quello della macchina». `astimezone()` senza argomento usa
+    # il fuso locale di chi esegue: sul Mac e' Roma, sui server di GitHub e' UTC. Il
+    # 07/09/2026 una misura delle 12:41 di Roma e' finita nella fascia «mattino» per
+    # questo. Le fasce descrivono la giornata di chi guarda l'app, non del server.
+    ora_roma = ora_utc.astimezone(ZoneInfo("Europe/Rome"))
     copertura: list[str] = []
 
     spot = fonti.oro_spot_usd_oncia()
