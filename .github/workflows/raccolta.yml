@@ -1,0 +1,42 @@
+name: Raccolta oro
+
+# Orari in UTC: 07:00, 11:00 e 16:00 corrispondono alle 9, 13 e 18 con l'ora legale
+# e alle 8, 12 e 17 con l'ora solare. Le fasce sono bande larghe apposta, cosi' il
+# cambio d'ora non sposta una rilevazione da una fascia all'altra.
+on:
+  schedule:
+    - cron: "0 7,11,16 * * *"
+  workflow_dispatch:          # per lanciarlo a mano quando serve
+
+permissions:
+  contents: write             # serve per riscrivere pubblico/serie.json
+
+concurrency:
+  group: raccolta             # due esecuzioni sovrapposte si contenderebbero il file
+  cancel-in-progress: false
+
+jobs:
+  misura:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa la sola dipendenza che serve
+        run: pip install --quiet xlrd   # legge il .xls storico dell'indice GPR
+
+      - name: Misura
+        run: python raccogli.py
+
+      - name: Pubblica
+        run: |
+          git config user.name "Raccoglitore oro"
+          git config user.email "actions@github.com"
+          git add pubblico/serie.json
+          # Se non e' cambiato nulla non si crea un commit vuoto: il registro
+          # dei commit deve raccontare le misure, non il fatto che il lavoro e' girato.
+          git diff --staged --quiet || git commit -m "Misura del $(date -u '+%d/%m/%Y %H:%M UTC')"
+          git push
