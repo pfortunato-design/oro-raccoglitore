@@ -211,9 +211,64 @@ def oro_mensile_banca_mondiale() -> Lettura:
 
 # ---------------------------------------------------------------- cambio
 
+BCE_CAMBIO = "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A"
+
+
+def _leggi_csv_bce(testo: str) -> dict[str, float]:
+    """La BCE pubblica DOLLARI PER EURO; a noi servono EURO PER DOLLARO.
+    ⛔ Il verso e' l'errore piu' facile e il piu' silenzioso: 1,1652 e 0,8582 sono
+    entrambi numeri plausibili, e sbagliarli falsa il prezzo del 35%."""
+    fuori: dict[str, float] = {}
+    for riga in csv.DictReader(io.StringIO(testo)):
+        giorno, valore = riga.get("TIME_PERIOD"), riga.get("OBS_VALUE")
+        if giorno and valore:
+            try:
+                usd_per_eur = float(valore)
+                if usd_per_eur > 0:
+                    fuori[giorno.strip()] = 1.0 / usd_per_eur
+            except ValueError:
+                continue
+    return fuori
+
+
+def eur_per_usd_bce() -> Lettura:
+    """Cambio dalla BCE, fonte ufficiale senza intermediari."""
+    fonte = "BCE (data-api.ecb.europa.eu)"
+    try:
+        testo = _get(f"{BCE_CAMBIO}?lastNObservations=1&format=csvdata", timeout=25).decode("utf-8")
+        serie = _leggi_csv_bce(testo)
+        if not serie:
+            return Lettura(None, fonte, errore="nessuna osservazione nel CSV")
+        g = max(serie)
+        return Lettura(round(serie[g], 6), fonte, momento=g)
+    except Exception as e:
+        return Lettura(None, fonte, errore=str(e))
+
+
+def eur_per_usd_bce_storico(dal: str) -> Lettura:
+    fonte = "BCE (data-api.ecb.europa.eu), serie"
+    try:
+        testo = _get(f"{BCE_CAMBIO}?startPeriod={dal}&format=csvdata", timeout=60).decode("utf-8")
+        serie = {g: round(v, 6) for g, v in _leggi_csv_bce(testo).items()}
+        if not serie:
+            return Lettura(None, fonte, errore="serie vuota")
+        return Lettura(float(len(serie)), fonte, momento=max(serie), extra={"serie": serie})
+    except Exception as e:
+        return Lettura(None, fonte, errore=str(e))
+
+
 def eur_per_usd() -> Lettura:
-    """Quanti euro vale un dollaro. Fonte: frankfurter.dev (tassi di riferimento BCE)."""
-    fonte = "frankfurter.dev (BCE)"
+    """Quanti euro vale un dollaro.
+
+    ⛔ Prima la BCE direttamente, poi frankfurter come ripiego. frankfurter e' un servizio
+    di terzi che rispecchia gli stessi dati: il 09/09/2026 ha risposto 521 e 522 due volte
+    di fila. Per un'app pubblica una dipendenza da un intermediario amatoriale, quando la
+    fonte ufficiale e' interrogabile, e' un rischio che non ha ragione di esistere.
+    """
+    diretta = eur_per_usd_bce()
+    if diretta.ok:
+        return diretta
+    fonte = f"frankfurter.dev (ripiego; BCE muta: {diretta.errore})"
     try:
         d = json.loads(_get("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR"))
         v = float(d["rates"]["EUR"])
@@ -226,7 +281,10 @@ def eur_per_usd() -> Lettura:
 
 def eur_per_usd_storico(dal: str) -> Lettura:
     """Serie storica del cambio USD->EUR da `dal` (AAAA-MM-GG) a oggi."""
-    fonte = "frankfurter.dev (BCE), serie"
+    diretta = eur_per_usd_bce_storico(dal)
+    if diretta.ok:
+        return diretta
+    fonte = f"frankfurter.dev (ripiego; BCE muta: {diretta.errore})"
     try:
         d = json.loads(_get(f"https://api.frankfurter.dev/v1/{dal}..?base=USD&symbols=EUR"))
         serie = {g: float(v["EUR"]) for g, v in d["rates"].items() if "EUR" in v}
