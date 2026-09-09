@@ -137,6 +137,78 @@ def oro_storico_usd_oncia(intervallo: str = "5y") -> Lettura:
         return Lettura(None, fonte, errore=str(e))
 
 
+# ------------------------------------------- oro mensile, Banca Mondiale
+
+PAGINA_PINK_SHEET = "https://www.worldbank.org/en/research/commodity-markets"
+# Ripiego se la pagina cambia forma. ⛔ Il codice nell'indirizzo cambia a ogni edizione:
+# cablarlo e basta significherebbe servire dati fermi senza accorgersene.
+PINK_SHEET_RIPIEGO = ("https://thedocs.worldbank.org/en/doc/"
+                      "74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/"
+                      "CMO-Historical-Data-Monthly.xlsx")
+
+
+def oro_mensile_banca_mondiale() -> Lettura:
+    """Prezzo dell'oro in dollari per oncia troy, MENSILE, dal 1960.
+
+    Fonte: World Bank Commodity Price Data («Pink Sheet»), licenza CC-BY 4.0 — uso
+    commerciale e redistribuzione consentiti con attribuzione.
+
+    ⛔ Perche' serve, ed e' la ragione per cui questa funzione esiste: la serie
+    GIORNALIERA dell'oro non ha una fonte gratuita con termini utilizzabili. Yahoo la
+    vieta esplicitamente («automated means… mobile application, data feed»), e FRED ha
+    dovuto RIMUOVERE le serie LBMA per licenza (oggi rispondono 404). Questa e' l'unica
+    storia lunga dell'oro che si possa ridistribuire.
+
+    ⚠️ E' mensile, e per il legame con i fattori macro va benissimo: il segnale misurato
+    vive proprio a orizzonte mensile (r = -0,60 contro -0,08 sul giornaliero), e con dati
+    mensili le osservazioni sono davvero indipendenti — niente finestre sovrapposte.
+    """
+    fonte = "World Bank Pink Sheet (CC-BY 4.0)"
+    try:
+        import re
+        try:
+            pagina = _get(PAGINA_PINK_SHEET, timeout=40).decode("utf-8", errors="ignore")
+            trovati = re.findall(r"https://[^\"']*CMO-Historical-Data-Monthly\.xlsx", pagina)
+            url = trovati[0] if trovati else PINK_SHEET_RIPIEGO
+        except Exception:
+            url = PINK_SHEET_RIPIEGO
+        grezzo = _get(url, timeout=90)
+
+        import io as _io
+        import openpyxl
+        wb = openpyxl.load_workbook(_io.BytesIO(grezzo), read_only=True, data_only=True)
+        sh = wb["Monthly Prices"]
+
+        colonna = None
+        for riga in sh.iter_rows(min_row=1, max_row=10, values_only=True):
+            for j, c in enumerate(riga):
+                if c and str(c).strip().lower() == "gold":
+                    colonna = j
+                    break
+            if colonna is not None:
+                break
+        if colonna is None:
+            return Lettura(None, fonte, errore="colonna «Gold» non trovata nel foglio mensile")
+
+        serie: dict[str, float] = {}
+        for riga in sh.iter_rows(min_col=1, max_col=colonna + 1, values_only=True):
+            etichetta, valore = riga[0], riga[colonna]
+            if not etichetta or not isinstance(valore, (int, float)):
+                continue
+            # Le righe utili hanno la forma «1960M01»: tutto il resto e' intestazione.
+            testo = str(etichetta).strip()
+            if len(testo) == 7 and testo[4] == "M" and testo[:4].isdigit() and testo[5:].isdigit():
+                serie[f"{testo[:4]}-{testo[5:]}"] = round(float(valore), 4)
+
+        if not serie:
+            return Lettura(None, fonte, errore="nessuna osservazione mensile estratta")
+        ultimo = max(serie)
+        return Lettura(serie[ultimo], fonte, momento=ultimo,
+                       extra={"serie": serie, "url": url, "unita": "USD per oncia troy"})
+    except Exception as e:
+        return Lettura(None, fonte, errore=f"{type(e).__name__}: {e}")
+
+
 # ---------------------------------------------------------------- cambio
 
 def eur_per_usd() -> Lettura:

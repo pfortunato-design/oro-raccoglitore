@@ -125,6 +125,17 @@ def main() -> int:
         else:
             copertura.append(f"{chiave} NON RILEVATO: {lettura.errore}")
 
+    # Storia lunga dell'oro, MENSILE. ⛔ L'unica ridistribuibile: la serie giornaliera non
+    # ha una fonte gratuita con termini utilizzabili (Yahoo la vieta, FRED ha dovuto
+    # rimuovere le serie LBMA). Qui la licenza e' CC-BY 4.0, con attribuzione.
+    mensile = fonti.oro_mensile_banca_mondiale()
+    if mensile.ok:
+        oro_mensile = mensile.extra["serie"]
+        copertura.append(f"oro mensile OK {len(oro_mensile)} mesi (al {mensile.momento})")
+    else:
+        oro_mensile = precedente.get("oro_mensile", {})
+        copertura.append(f"oro mensile NON RILEVATO: {mensile.errore}")
+
     gpr = fonti.rischio_geopolitico()
     if gpr.ok:
         fattori["rischio_geopolitico"] = taglia(gpr.extra["serie"])
@@ -144,6 +155,13 @@ def main() -> int:
         "corrente": corrente,
         "rilevazioni": rilevazioni,
         "giornaliero": dict(sorted(giornaliero.items())),
+        "oro_mensile": dict(sorted(oro_mensile.items())),
+        "oro_mensile_fonte": {
+            "nome": "World Bank Commodity Price Data (Pink Sheet)",
+            "licenza": "CC-BY 4.0",
+            "unita": "USD per oncia troy",
+            "attribuzione": "Fonte: World Bank, Commodity Price Data (Pink Sheet), CC-BY 4.0",
+        },
         "fattori": fattori,
         "fattori_meta": meta,
         "copertura": copertura,
@@ -155,7 +173,8 @@ def main() -> int:
     peso = USCITA.stat().st_size / 1024
     stato = "mercato aperto" if aperto else "MERCATO CHIUSO (chiusura precedente riproposta)"
     print(f"{corrente['oro_eur_grammo'] if corrente else 'n/r'} EUR/g · {stato}")
-    print(f"{len(giornaliero)} giorni · {len(rilevazioni)} rilevazioni · {peso:.0f} kB")
+    print(f"{len(giornaliero)} giorni · {len(oro_mensile)} mesi · "
+          f"{len(rilevazioni)} rilevazioni · {peso:.0f} kB")
     print("Fonti: " + " · ".join(copertura))
     return 0 if corrente else 2
 
