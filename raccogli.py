@@ -34,6 +34,20 @@ def fascia(m: datetime) -> str:
     return "notte"
 
 
+def medie_mensili(serie: dict[str, float]) -> dict[str, float]:
+    """Media mensile su TUTTA la storia disponibile.
+
+    ⛔ Esiste perche' le serie giornaliere si pubblicano tagliate a cinque anni per tenere
+    il file leggero — e quel taglio troncava in silenzio l'analisi mensile, che vive proprio
+    sulla storia lunga. Le medie mensili costano poche centinaia di numeri per fattore:
+    si pubblicano intere. Ed e' la stessa convenzione del Pink Sheet, che pubblica medie.
+    """
+    per: dict[str, list[float]] = {}
+    for giorno, v in serie.items():
+        per.setdefault(giorno[:7], []).append(v)
+    return {m: round(sum(v) / len(v), 6) for m, v in per.items()}
+
+
 def taglia(serie: dict[str, float], anni: int = ANNI_DI_STORIA) -> dict[str, float]:
     limite = (date.today() - timedelta(days=365 * anni)).isoformat()
     return {g: round(v, 6) for g, v in serie.items() if g >= limite}
@@ -113,11 +127,13 @@ def main() -> int:
         giornaliero[corrente["data"]] = corrente["oro_eur_grammo"]
 
     fattori = precedente.get("fattori", {})
+    fattori_mensili = precedente.get("fattori_mensili", {})
     meta = precedente.get("fattori_meta", {})
     for chiave in fonti.SERIE_FRED:
         lettura = fonti.fred(chiave)
         if lettura.ok:
             fattori[chiave] = taglia(lettura.extra["serie"])
+            fattori_mensili[chiave] = medie_mensili(lettura.extra["serie"])
             codice, descrizione, unita = fonti.SERIE_FRED[chiave]
             meta[chiave] = {"codice": codice, "descrizione": descrizione,
                             "unita": unita, "fonte": lettura.fonte, "al": lettura.momento}
@@ -139,6 +155,7 @@ def main() -> int:
     gpr = fonti.rischio_geopolitico()
     if gpr.ok:
         fattori["rischio_geopolitico"] = taglia(gpr.extra["serie"])
+        fattori_mensili["rischio_geopolitico"] = medie_mensili(gpr.extra["serie"])
         meta["rischio_geopolitico"] = {
             "codice": "GPRD", "descrizione": "Indice di rischio geopolitico",
             "unita": "indice",
@@ -163,6 +180,7 @@ def main() -> int:
             "attribuzione": "Fonte: World Bank, Commodity Price Data (Pink Sheet), CC-BY 4.0",
         },
         "fattori": fattori,
+        "fattori_mensili": fattori_mensili,
         "fattori_meta": meta,
         "copertura": copertura,
     }
@@ -173,8 +191,9 @@ def main() -> int:
     peso = USCITA.stat().st_size / 1024
     stato = "mercato aperto" if aperto else "MERCATO CHIUSO (chiusura precedente riproposta)"
     print(f"{corrente['oro_eur_grammo'] if corrente else 'n/r'} EUR/g · {stato}")
-    print(f"{len(giornaliero)} giorni · {len(oro_mensile)} mesi · "
-          f"{len(rilevazioni)} rilevazioni · {peso:.0f} kB")
+    piu_lunga = max((len(v) for v in fattori_mensili.values()), default=0)
+    print(f"{len(giornaliero)} giorni · {len(oro_mensile)} mesi oro · "
+          f"{piu_lunga} mesi sul fattore piu' lungo · {len(rilevazioni)} rilevazioni · {peso:.0f} kB")
     print("Fonti: " + " · ".join(copertura))
     return 0 if corrente else 2
 
