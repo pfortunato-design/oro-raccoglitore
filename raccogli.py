@@ -101,25 +101,21 @@ def main() -> int:
     else:
         print("::warning::prezzo non rilevato in questa esecuzione")
 
-    # Serie giornaliera: si RICOSTRUISCE dai fornitori a ogni giro, cosi' un'esecuzione
-    # saltata non lascia un buco permanente. I giorni a mercato chiuso non entrano.
-    giornaliero = {g: v for g, v in precedente.get("giornaliero", {}).items()}
-    storico = fonti.oro_storico_usd_oncia("5y")
-    if storico.ok:
-        usd = storico.extra["serie"]
-        cambi = fonti.eur_per_usd_storico(min(usd))
-        if cambi.ok:
-            k = cambi.extra["serie"]
-            giorni_k = sorted(k)
-            for g, u in usd.items():
-                c = k.get(g) or next((k[x] for x in reversed(giorni_k) if x <= g), None)
-                if c:
-                    giornaliero[g] = round(fonti.eur_grammo(u, c), 4)
-            copertura.append(f"serie oro OK {len(usd)} giorni")
-        else:
-            copertura.append(f"serie cambio NON RILEVATA: {cambi.errore}")
-    else:
-        copertura.append(f"serie oro NON RILEVATA: {storico.errore}")
+    # Serie giornaliera: SOLO i giorni che abbiamo misurato noi.
+    #
+    # ⛔ Fino al 16/11/2026 questa serie si ricostruiva ogni giro dal future COMEX di Yahoo
+    # Finance, e arrivava al 2021. I termini di Yahoo vietano proprio questo — raccolta
+    # automatica e ridistribuzione in un'app — quindi quei giorni sono stati tolti, non
+    # solo smesso di aggiungerne. Il filtro qui sotto li toglie anche dal file gia'
+    # pubblicato, al primo giro dopo la modifica.
+    #
+    # Resta una storia piu' corta ma interamente nostra, e ridistribuibile senza chiedere
+    # il permesso a nessuno. La profondita' la da' la serie MENSILE della Banca Mondiale.
+    PRIMO_GIORNO_NOSTRO = "2026-09-07"   # prima misura del raccoglitore, verificata nel file
+    giornaliero = {g: v for g, v in precedente.get("giornaliero", {}).items()
+                   if g >= PRIMO_GIORNO_NOSTRO}
+    copertura.append(f"serie giornaliera: {len(giornaliero)} giorni misurati da noi "
+                     f"(dal {PRIMO_GIORNO_NOSTRO}; i giorni precedenti venivano da Yahoo e sono stati tolti)")
 
     # La chiusura di oggi vale solo a mercato aperto (v. sopra: altrimenti e' la copia
     # della chiusura precedente, e diventerebbe un giorno piatto mai misurato).
@@ -152,6 +148,23 @@ def main() -> int:
         oro_mensile = precedente.get("oro_mensile", {})
         copertura.append(f"oro mensile NON RILEVATO: {mensile.errore}")
 
+    # La serie della Banca Mondiale e' in dollari per oncia: per mostrarla accanto al
+    # prezzo di oggi serve in euro al grammo. Il cambio mensile lo da' la BCE dal 1999;
+    # i mesi precedenti restano fuori, perche' prima l'euro non esisteva.
+    cambio_mensile = fonti.eur_per_usd_mensile()
+    oro_mensile_eur_g: dict[str, float] = {}
+    if cambio_mensile.ok and oro_mensile:
+        k = cambio_mensile.extra["serie"]
+        for mese, usd_oncia in oro_mensile.items():
+            c = k.get(mese)
+            if c:
+                oro_mensile_eur_g[mese] = round(fonti.eur_grammo(usd_oncia, c), 4)
+        copertura.append(f"oro mensile in euro OK {len(oro_mensile_eur_g)} mesi "
+                         f"(dal {min(oro_mensile_eur_g)}: prima dell'euro non si converte)")
+    else:
+        oro_mensile_eur_g = precedente.get("oro_mensile_eur_grammo", {})
+        copertura.append(f"cambio mensile NON RILEVATO: {cambio_mensile.errore}")
+
     gpr = fonti.rischio_geopolitico()
     if gpr.ok:
         fattori["rischio_geopolitico"] = taglia(gpr.extra["serie"])
@@ -173,6 +186,7 @@ def main() -> int:
         "rilevazioni": rilevazioni,
         "giornaliero": dict(sorted(giornaliero.items())),
         "oro_mensile": dict(sorted(oro_mensile.items())),
+        "oro_mensile_eur_grammo": dict(sorted(oro_mensile_eur_g.items())),
         "oro_mensile_fonte": {
             "nome": "World Bank Commodity Price Data (Pink Sheet)",
             "licenza": "CC-BY 4.0",
@@ -192,7 +206,8 @@ def main() -> int:
     stato = "mercato aperto" if aperto else "MERCATO CHIUSO (chiusura precedente riproposta)"
     print(f"{corrente['oro_eur_grammo'] if corrente else 'n/r'} EUR/g · {stato}")
     piu_lunga = max((len(v) for v in fattori_mensili.values()), default=0)
-    print(f"{len(giornaliero)} giorni · {len(oro_mensile)} mesi oro · "
+    print(f"{len(giornaliero)} giorni nostri · {len(oro_mensile)} mesi oro "
+          f"({len(oro_mensile_eur_g)} convertiti in euro) · "
           f"{piu_lunga} mesi sul fattore piu' lungo · {len(rilevazioni)} rilevazioni · {peso:.0f} kB")
     print("Fonti: " + " · ".join(copertura))
     return 0 if corrente else 2

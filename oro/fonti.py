@@ -105,36 +105,14 @@ def oro_spot_usd_oncia() -> Lettura:
         return Lettura(None, fonte, errore=str(e))
 
 
-def oro_futures_usd_oncia() -> Lettura:
-    """Future COMEX GC=F. Fonte di RISCONTRO, non sostitutiva dello spot:
-    il future quota con un premio/sconto rispetto allo spot."""
-    fonte = "Yahoo Finance GC=F"
-    try:
-        d = json.loads(_get("https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range=5d"))
-        m = d["chart"]["result"][0]["meta"]
-        return Lettura(float(m["regularMarketPrice"]), fonte,
-                       momento=datetime.fromtimestamp(m["regularMarketTime"], timezone.utc).isoformat())
-    except Exception as e:
-        return Lettura(None, fonte, errore=str(e))
-
-
-def oro_storico_usd_oncia(intervallo: str = "5y") -> Lettura:
-    """Serie storica giornaliera del future GC=F: {'AAAA-MM-GG': chiusura}."""
-    fonte = f"Yahoo Finance GC=F ({intervallo})"
-    try:
-        d = json.loads(_get(
-            f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1d&range={intervallo}"))
-        r = d["chart"]["result"][0]
-        chiusure = r["indicators"]["quote"][0]["close"]
-        serie = {
-            datetime.fromtimestamp(ts, timezone.utc).date().isoformat(): float(c)
-            for ts, c in zip(r["timestamp"], chiusure) if c is not None
-        }
-        if not serie:
-            return Lettura(None, fonte, errore="serie vuota")
-        return Lettura(float(len(serie)), fonte, momento=max(serie), extra={"serie": serie})
-    except Exception as e:
-        return Lettura(None, fonte, errore=str(e))
+# ⛔ Qui c'erano due funzioni che leggevano il future COMEX GC=F da Yahoo Finance:
+# il prezzo di riscontro e la serie storica giornaliera. Sono state TOLTE il 16/11/2026.
+# Non per un difetto tecnico — funzionavano — ma perche' i termini di Yahoo vietano
+# «automated means… scrapers» e «create any database… mobile application, data feed»:
+# esattamente cio' che fa un'app che pubblica quei dati. La storia lunga dell'oro ora
+# viene dal Pink Sheet della Banca Mondiale (CC-BY 4.0, ridistribuibile), che e' MENSILE;
+# la serie giornaliera e' solo quella che misuriamo noi, e parte da quando il
+# raccoglitore ha cominciato. Meno profondita', ma tutta utilizzabile.
 
 
 # ------------------------------------------- oro mensile, Banca Mondiale
@@ -250,6 +228,30 @@ def eur_per_usd_bce_storico(dal: str) -> Lettura:
     try:
         testo = _get(f"{BCE_CAMBIO}?startPeriod={dal}&format=csvdata", timeout=60).decode("utf-8")
         serie = {g: round(v, 6) for g, v in _leggi_csv_bce(testo).items()}
+        if not serie:
+            return Lettura(None, fonte, errore="serie vuota")
+        return Lettura(float(len(serie)), fonte, momento=max(serie), extra={"serie": serie})
+    except Exception as e:
+        return Lettura(None, fonte, errore=str(e))
+
+
+BCE_CAMBIO_MENSILE = "https://data-api.ecb.europa.eu/service/data/EXR/M.USD.EUR.SP00.A"
+
+
+def eur_per_usd_mensile() -> Lettura:
+    """Cambio medio MENSILE euro/dollaro dalla BCE, dal 1999 (nascita dell'euro).
+
+    Serve per portare in euro al grammo la serie mensile dell'oro della Banca Mondiale,
+    che e' in dollari per oncia. Senza, la storia lunga si potrebbe mostrare solo in
+    dollari — e questa e' un'app che ragiona in euro.
+
+    ⚠️ Prima del 1999 l'euro non esisteva: quei mesi restano senza cambio, e la serie
+    in euro parte da gennaio 1999. Non si inventa un cambio all'indietro.
+    """
+    fonte = "BCE (data-api.ecb.europa.eu), mensile"
+    try:
+        testo = _get(f"{BCE_CAMBIO_MENSILE}?format=csvdata", timeout=60).decode("utf-8")
+        serie = {m: round(v, 6) for m, v in _leggi_csv_bce(testo).items()}
         if not serie:
             return Lettura(None, fonte, errore="serie vuota")
         return Lettura(float(len(serie)), fonte, momento=max(serie), extra={"serie": serie})
